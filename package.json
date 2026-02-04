@@ -1,0 +1,62 @@
+{
+  "name": "plane-jira-importer",
+  "version": "1.0.0",
+  "description": "Migrate issues from Jira Cloud to Plane (self-hosted)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "plane-jira-importer": "dist/index.js"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint src/ tests/ --fix",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "jira",
+    "plane",
+    "migration",
+    "import",
+    "issues",
+    "project-management",
+    "typescript"
+  ],
+  "author": "Aziz Uysal",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/azizuysal/plane-jira-importer.git"
+  },
+  "homepage": "https://github.com/azizuysal/plane-jira-importer#readme",
+  "bugs": {
+    "url": "https://github.com/azizuysal/plane-jira-importer/issues"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.0",
+    "inquirer": "^9.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/inquirer": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.2.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
