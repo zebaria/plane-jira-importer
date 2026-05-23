@@ -8,8 +8,8 @@
     "plane-jira-importer": "dist/index.js"
   },
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
+    "start": "node --disable-warning=DEP0205 --import tsx src/index.ts",
+    "dev": "node --disable-warning=DEP0205 --import tsx --watch src/index.ts",
     "build": "tsup src/index.ts --format esm --dts --clean",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -17,7 +17,10 @@
     "lint:fix": "eslint src/ tests/ --fix",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "scripts:users": "node --disable-warning=DEP0205 --import tsx scripts/pull-jira-users.ts",
+    "scripts:states": "node --disable-warning=DEP0205 --import tsx scripts/pull-state-mapping.ts",
+    "scripts:invite": "node --disable-warning=DEP0205 --import tsx scripts/invite-users.ts"
   },
   "keywords": [
     "jira",
