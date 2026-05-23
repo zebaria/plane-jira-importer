@@ -75,33 +75,39 @@ export class JiraClient {
    * Returns the full list of issue summaries (not expanded).
    */
   async searchIssues(projectKey: string): Promise<JiraIssue[]> {
+    // /rest/api/3/search/jql (May 2024+) uses cursor pagination.
+    // `startAt` is silently ignored, `total` returns null, and the
+    // caller must drive the loop with `nextPageToken` and stop on
+    // `isLast`. Using offset pagination here loops forever on the
+    // first page.
     const issues: JiraIssue[] = [];
-    let startAt = 0;
     const maxResults = 100;
+    let nextPageToken: string | undefined;
 
     for (;;) {
       const data = await this.apiCall(
         async () => {
+          const params: Record<string, string | number> = {
+            jql: `project = "${projectKey}" ORDER BY created ASC`,
+            maxResults,
+            fields:
+              'summary,status,priority,issuetype,created,updated,assignee,reporter,creator,labels,parent,customfield_10015,duedate,attachment',
+          };
+          if (nextPageToken) params.nextPageToken = nextPageToken;
           const { data } = await this.client.get<JiraSearchResponse>('/rest/api/3/search/jql', {
-            params: {
-              jql: `project = "${projectKey}" ORDER BY created ASC`,
-              maxResults,
-              startAt,
-              fields:
-                'summary,status,priority,issuetype,created,updated,assignee,reporter,creator,labels,parent,customfield_10015,duedate,attachment',
-            },
+            params,
           });
           return data;
         },
-        `searching issues (offset ${startAt})`,
+        `searching issues (page after ${nextPageToken ?? 'start'})`,
       );
 
       const fetched = data.issues ?? [];
       issues.push(...fetched);
       log.dim(`  Fetched ${issues.length} issues so far`);
 
-      if (fetched.length === 0 || fetched.length < maxResults) break;
-      startAt += maxResults;
+      if (data.isLast || !data.nextPageToken) break;
+      nextPageToken = data.nextPageToken;
     }
 
     return issues;

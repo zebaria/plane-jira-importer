@@ -122,9 +122,20 @@ export interface JiraComment {
 
 // ─── API Responses ───────────────────────────────────────────────────────────
 
-/** Paginated response from Jira's search endpoint. */
+/** Paginated response from Jira's search endpoint.
+ *
+ * `/rest/api/3/search/jql` returns cursor-based pagination fields
+ * (`isLast`, `nextPageToken`); `total`/`startAt` are deprecated and
+ * may be undefined or null. The legacy `/rest/api/3/search` endpoint
+ * still returns offset-based fields. Both shapes are kept here so the
+ * type covers either endpoint.
+ */
 export interface JiraSearchResponse {
   issues: JiraIssue[];
+  // cursor pagination (new)
+  isLast?: boolean;
+  nextPageToken?: string;
+  // offset pagination (legacy)
   total?: number;
   startAt?: number;
   maxResults?: number;

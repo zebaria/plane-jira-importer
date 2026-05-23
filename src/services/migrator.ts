@@ -134,7 +134,9 @@ export async function runMigration(options: MigrationOptions): Promise<void> {
   const migratedItems = existingWorkItems.filter(
     (w) => w.external_source === 'jira-importer',
   );
-  const migratedKeys = new Set(migratedItems.map((w) => w.external_id));
+  const migratedKeys = new Set(
+    migratedItems.map((w) => w.external_id).filter((k): k is string => !!k),
+  );
 
   // Track created work items by Jira key (including previously migrated)
   const workItemMap = new Map<string, string>();
