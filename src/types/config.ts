@@ -56,6 +56,39 @@ export interface MigrationConfig {
   maxAttachmentSizeMb: number;
 }
 
+// ─── User Mapping File ───────────────────────────────────────────────────────
+
+/**
+ * A single user entry in the user-mapping JSON file. Produced by
+ * `scripts/pull-jira-users.ts`, hand-edited by the operator to fill
+ * emails the Jira API hides and to flag former employees.
+ */
+export interface UserFileEntry {
+  display_name: string;
+  /** Plane email. `null` if unknown — assignee will be skipped + noted. */
+  email: string | null;
+  /**
+   * Whether the person is still an active member. Used only for human
+   * context in logs and the description fallback note; the importer
+   * treats `current=false` users the same as `current=true` (we still
+   * try to match by email).
+   */
+  current: boolean;
+  _seen_in: string[];
+}
+
+/** Parsed user-mapping JSON: Jira accountId → entry. */
+export type UsersFile = Record<string, UserFileEntry>;
+
+// ─── State Mapping File ──────────────────────────────────────────────────────
+
+/** Parsed state-mapping JSON. Produced by `scripts/pull-state-mapping.ts`. */
+export interface StateMappingFile {
+  _plane_states?: Array<{ id: string; name: string; group: string }>;
+  /** Jira status name → Plane state name (or null if intentionally unmapped). */
+  mapping: Record<string, string | null>;
+}
+
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 /** Parsed CLI flags from `process.argv`. */
@@ -64,6 +97,10 @@ export interface CliFlags {
   'reimport'?: string | boolean;
   'project-key'?: string;
   'plane-project'?: string;
+  /** Path to a JSON file mapping Jira accountId → user record. */
+  'users-file'?: string;
+  /** Path to a JSON file mapping Jira status name → Plane state name. */
+  'state-mapping-file'?: string;
   [key: string]: string | boolean | undefined;
 }
 
