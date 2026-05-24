@@ -20,7 +20,8 @@
     "clean": "rm -rf dist",
     "scripts:users": "node --disable-warning=DEP0205 --import tsx scripts/pull-jira-users.ts",
     "scripts:states": "node --disable-warning=DEP0205 --import tsx scripts/pull-state-mapping.ts",
-    "scripts:invite": "node --disable-warning=DEP0205 --import tsx scripts/invite-users.ts"
+    "scripts:invite": "node --disable-warning=DEP0205 --import tsx scripts/invite-users.ts",
+    "scripts:seed-members": "node --disable-warning=DEP0205 --import tsx scripts/seed-members.ts"
   },
   "keywords": [
     "jira",
