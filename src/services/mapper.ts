@@ -106,6 +106,16 @@ export async function buildStatusMap(
     return map;
   }
 
+  // No file + no TTY = nothing we can do. Fail fast with a clear
+  // message instead of hanging on inquirer's prompt waiting for
+  // input that will never come.
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      'Status mapping requires --state-mapping-file when running non-interactively. ' +
+        'Generate one with `npm run scripts:states` and pass it via --state-mapping-file.',
+    );
+  }
+
   for (const status of jiraStatuses) {
     const autoMatch = planeStates.find(
       (s) => s.name.toLowerCase() === status.toLowerCase(),
@@ -225,6 +235,14 @@ export async function buildUserMap(
     log.dim(`    no email (noted in description):       ${noEmail}`);
     log.dim(`    not in users-file (noted):             ${notInFile}`);
     return map;
+  }
+
+  // No file + no TTY = nothing we can do. Fail fast.
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      'User mapping requires --users-file when running non-interactively. ' +
+        'Generate one with `npm run scripts:users` and pass it via --users-file.',
+    );
   }
 
   for (const user of jiraUsers) {

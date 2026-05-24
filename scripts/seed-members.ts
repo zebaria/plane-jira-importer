@@ -102,15 +102,35 @@ const pollArgs = [
 ];
 if (REGION) pollArgs.push('--region', REGION);
 
+// Poll until the SSM command finishes. We use the synchronous AWS
+// CLI here because there's nothing else to do while we wait — but
+// transient failures (network blip, IAM hiccup, AWS API throttling)
+// shouldn't kill the script outright. Catch them, log once, and keep
+// polling until the deadline.
 let inv: { Status: string; CommandPlugins: { Output: string }[] } | null = null;
+let consecutiveErrors = 0;
 while (Date.now() < deadline) {
-  const out = execFileSync('aws', pollArgs, { encoding: 'utf-8' });
-  inv = JSON.parse(out);
-  if (
-    inv &&
-    !['Pending', 'InProgress', 'Delayed'].includes(inv.Status)
-  ) {
-    break;
+  try {
+    const out = execFileSync('aws', pollArgs, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    inv = JSON.parse(out);
+    consecutiveErrors = 0;
+    if (
+      inv &&
+      !['Pending', 'InProgress', 'Delayed'].includes(inv.Status)
+    ) {
+      break;
+    }
+  } catch (err) {
+    consecutiveErrors++;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  poll error (${consecutiveErrors}/3): ${msg.split('\n')[0]}`);
+    if (consecutiveErrors >= 3) {
+      console.error('Three consecutive poll failures — giving up.');
+      process.exit(1);
+    }
   }
   await new Promise((r) => setTimeout(r, 3000));
 }
