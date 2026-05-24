@@ -59,7 +59,19 @@ export async function buildStatusMap(
   const map: Record<string, string> = {};
 
   if (stateFile) {
-    const planeByName = new Map(planeStates.map((s) => [s.name.toLowerCase(), s.id]));
+    // Build a lowercase-name → ids[] index. Plane allows multiple
+    // states with the same display name across different groups
+    // (e.g. a "Done" in the Completed group and another in the
+    // Cancelled group), so we collect *all* matches per name and
+    // warn if we have to pick one ambiguously.
+    const planeByName = new Map<string, PlaneState[]>();
+    for (const s of planeStates) {
+      const key = s.name.toLowerCase();
+      const bucket = planeByName.get(key) ?? [];
+      bucket.push(s);
+      planeByName.set(key, bucket);
+    }
+
     const missing: string[] = [];
     for (const status of jiraStatuses) {
       const targetName = stateFile.mapping[status];
@@ -67,13 +79,25 @@ export async function buildStatusMap(
         missing.push(`"${status}" → (unmapped)`);
         continue;
       }
-      const id = planeByName.get(targetName.toLowerCase());
-      if (!id) {
+      const matches = planeByName.get(targetName.toLowerCase()) ?? [];
+      if (matches.length === 0) {
         missing.push(`"${status}" → "${targetName}" (no Plane state by that name)`);
         continue;
       }
-      map[status] = id;
-      log.dim(`  ${status} → ${targetName}`);
+      const chosen = matches[0];
+      if (matches.length > 1) {
+        const alts = matches
+          .map((s) => `"${s.name}" (group=${s.group}, id=${s.id})`)
+          .join(', ');
+        log.warn(
+          `Plane has ${matches.length} states named "${targetName}": ${alts}. ` +
+            `Picking the first (group=${chosen.group}). Disambiguate by ` +
+            `renaming one of the duplicate states in Plane, or by editing ` +
+            `the state-mapping file to reference a unique name.`,
+        );
+      }
+      map[status] = chosen.id;
+      log.dim(`  ${status} → ${targetName} (group=${chosen.group})`);
     }
     if (missing.length > 0) {
       log.error(`State mapping file is incomplete:\n  ${missing.join('\n  ')}`);

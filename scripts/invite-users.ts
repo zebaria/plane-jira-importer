@@ -52,19 +52,53 @@ const plane = axios.create({
   headers: { 'X-API-Key': PLANE_API_KEY, Accept: 'application/json' },
 });
 
+/**
+ * Pull the email field out of a workspace member or invitation
+ * record. Plane's API has returned both shapes across versions /
+ * endpoints, so accept either:
+ *   - flat:   `{ email: "alice@…" }`
+ *   - nested: `{ member: { email: "alice@…" } }`
+ */
+function pickEmail(record: unknown): string | null {
+  if (!record || typeof record !== 'object') return null;
+  const r = record as { email?: unknown; member?: { email?: unknown } };
+  if (typeof r.email === 'string') return r.email;
+  if (r.member && typeof r.member === 'object') {
+    const me = r.member as { email?: unknown };
+    if (typeof me.email === 'string') return me.email;
+  }
+  return null;
+}
+
+/**
+ * Plane endpoints sometimes return a flat array and sometimes a
+ * paginated `{ results: [...] }`. Normalise to a flat array.
+ */
+function asArray<T = unknown>(data: unknown): T[] {
+  if (Array.isArray(data)) return data as T[];
+  if (data && typeof data === 'object') {
+    const r = (data as { results?: unknown }).results;
+    if (Array.isArray(r)) return r as T[];
+  }
+  return [];
+}
+
 async function main() {
   const users = JSON.parse(readFileSync(USERS_FILE, 'utf-8')) as Record<string, UserRecord>;
 
-  const [{ data: members }, { data: invitations }] = await Promise.all([
+  const [{ data: membersData }, { data: invitationsData }] = await Promise.all([
     plane.get(`/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/members/`),
     plane.get(`/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/invitations/`),
   ]);
 
+  const members = asArray(membersData);
+  const invitations = asArray(invitationsData);
+
   const memberEmails = new Set<string>(
-    (members ?? []).map((m: { email: string }) => m.email.toLowerCase()),
+    members.map(pickEmail).filter((e): e is string => !!e).map((e) => e.toLowerCase()),
   );
   const invitedEmails = new Set<string>(
-    (invitations ?? []).map((i: { email: string }) => i.email.toLowerCase()),
+    invitations.map(pickEmail).filter((e): e is string => !!e).map((e) => e.toLowerCase()),
   );
 
   // Dedup by email — multiple Jira accountIds may map to one person.

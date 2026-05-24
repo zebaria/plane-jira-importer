@@ -55,7 +55,8 @@ ws = Workspace.objects.get(slug=workspace_slug)
 with open(users_path) as f:
     users = json.load(f)
 
-created_n = existed_n = skipped_n = invites_dropped = 0
+created_n = existed_n = skipped_n = invites_dropped = failed_n = 0
+failures: list[tuple[str, str]] = []
 
 for entry in users.values():
     if not entry.get("current") or not entry.get("email"):
@@ -67,33 +68,43 @@ for entry in users.values():
     first_name = name_parts[0] if name_parts else ""
     last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-    with transaction.atomic():
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "username": uuid.uuid4().hex,
-                "first_name": first_name,
-                "last_name": last_name,
-                "is_password_autoset": True,
-                "is_email_verified": True,
-                "password": make_password(uuid.uuid4().hex),
-            },
-        )
-        Profile.objects.get_or_create(user=user)
-        member, _ = WorkspaceMember.objects.get_or_create(
-            workspace=ws, member=user, defaults={"role": 15}
-        )
-        # Drop any pending invite for this email — the user is a real
-        # member now, and accepted=False invites just clutter the admin UI.
-        # QuerySet.delete() normally returns (count, by_model_dict) but
-        # be defensive in case it's just an int.
-        result = WorkspaceMemberInvite.objects.filter(
-            workspace=ws, email=email
-        ).delete()
-        if isinstance(result, tuple):
-            invites_dropped += result[0]
-        else:
-            invites_dropped += result
+    # Per-user transaction so one bad row (db constraint, validation,
+    # network blip) rolls back its own work but the loop continues
+    # for everyone else. Without this an exception mid-batch leaves
+    # the operator to figure out who got seeded and who didn't.
+    try:
+        with transaction.atomic():
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    "username": uuid.uuid4().hex,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "is_password_autoset": True,
+                    "is_email_verified": True,
+                    "password": make_password(uuid.uuid4().hex),
+                },
+            )
+            Profile.objects.get_or_create(user=user)
+            member, _ = WorkspaceMember.objects.get_or_create(
+                workspace=ws, member=user, defaults={"role": 15}
+            )
+            # Drop any pending invite for this email — the user is a real
+            # member now, and accepted=False invites just clutter the admin UI.
+            # QuerySet.delete() normally returns (count, by_model_dict) but
+            # be defensive in case it's just an int.
+            result = WorkspaceMemberInvite.objects.filter(
+                workspace=ws, email=email
+            ).delete()
+            if isinstance(result, tuple):
+                invites_dropped += result[0]
+            else:
+                invites_dropped += result
+    except Exception as e:  # noqa: BLE001 — keep going on any failure
+        failed_n += 1
+        failures.append((email, f"{type(e).__name__}: {e}"))
+        print(f"failed:  {email}  ({type(e).__name__}: {e})")
+        continue
 
     if created:
         created_n += 1
@@ -104,5 +115,11 @@ for entry in users.values():
 
 print(
     f"\nsummary: created={created_n}  existed={existed_n}  "
-    f"skipped(former-or-no-email)={skipped_n}  invites-dropped={invites_dropped}"
+    f"skipped(former-or-no-email)={skipped_n}  failed={failed_n}  "
+    f"invites-dropped={invites_dropped}"
 )
+if failed_n:
+    print("\nfailures:")
+    for email, msg in failures:
+        print(f"  {email}: {msg}")
+    sys.exit(1)
