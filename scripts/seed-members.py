@@ -85,10 +85,15 @@ for entry in users.values():
         )
         # Drop any pending invite for this email — the user is a real
         # member now, and accepted=False invites just clutter the admin UI.
-        dropped = WorkspaceMemberInvite.objects.filter(
+        # QuerySet.delete() normally returns (count, by_model_dict) but
+        # be defensive in case it's just an int.
+        result = WorkspaceMemberInvite.objects.filter(
             workspace=ws, email=email
         ).delete()
-        invites_dropped += dropped[0]
+        if isinstance(result, tuple):
+            invites_dropped += result[0]
+        else:
+            invites_dropped += result
 
     if created:
         created_n += 1

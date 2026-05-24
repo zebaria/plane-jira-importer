@@ -32,14 +32,17 @@ export class PlaneClient {
   private readonly rateLimiter: IRateLimiter;
   private readonly maxRetries: number;
   private readonly client: AxiosInstance;
+  /** Public-host axios for endpoints not under /api/v1 (e.g. /api/instances/). */
+  private readonly publicClient: AxiosInstance;
 
   constructor(config: PlaneConfig) {
     this.workspaceSlug = config.workspaceSlug;
     this.rateLimiter = config.rateLimiter;
     this.maxRetries = config.maxRetries ?? 3;
 
+    const baseHost = config.host.replace(/\/+$/, '');
     this.client = axios.create({
-      baseURL: `${config.host.replace(/\/+$/, '')}/api/v1`,
+      baseURL: `${baseHost}/api/v1`,
       headers: {
         'X-API-Key': config.apiKey,
         Accept: 'application/json',
@@ -47,6 +50,36 @@ export class PlaneClient {
       },
       timeout: 30_000,
     });
+    this.publicClient = axios.create({
+      baseURL: baseHost,
+      headers: { Accept: 'application/json' },
+      timeout: 30_000,
+    });
+  }
+
+  // ── Instance ─────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch the public instance config. Currently only used to read
+   * `FILE_SIZE_LIMIT` so we can warn (and clamp) when the importer's
+   * `MAX_ATTACHMENT_SIZE_MB` exceeds what the server will actually
+   * accept — Plane silently caps the S3 presigned URL's
+   * content-length-range at `min(client_size, FILE_SIZE_LIMIT)`, so
+   * any larger attachment is rejected by S3 with `EntityTooLarge`.
+   *
+   * Endpoint is unauthenticated and at `/api/instances/`, not under
+   * `/api/v1/`.
+   */
+  async getInstanceFileSizeLimit(): Promise<number | null> {
+    try {
+      const { data } = await this.publicClient.get<{
+        config?: { file_size_limit?: number };
+      }>('/api/instances/');
+      const limit = data.config?.file_size_limit;
+      return typeof limit === 'number' && Number.isFinite(limit) ? limit : null;
+    } catch {
+      return null;
+    }
   }
 
   // ── Projects ─────────────────────────────────────────────────────────────

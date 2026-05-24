@@ -52,15 +52,15 @@ const remoteCommands = [
   `echo '${b64(usersJson)}' | base64 -d > /tmp/users.json`,
   `echo '${b64(seedScript)}' | base64 -d > /tmp/seed-members.py`,
   // Copy into the api container
-  'docker cp /tmp/users.json api:/tmp/users.json',
-  'docker cp /tmp/seed-members.py api:/tmp/seed-members.py',
+  'docker cp /tmp/users.json plane-api-1:/tmp/users.json',
+  'docker cp /tmp/seed-members.py plane-api-1:/tmp/seed-members.py',
   // Execute. argv inside Django shell -c is passed through to the
   // module being exec'd, so we wrap the script in an exec() call and
   // splice argv in via sys.argv.
-  `docker exec api python manage.py shell -c "import sys; sys.argv=['seed-members', '${WORKSPACE_SLUG}', '/tmp/users.json']; exec(open('/tmp/seed-members.py').read())"`,
+  `docker exec plane-api-1 python manage.py shell -c "import sys; sys.argv=['seed-members', '${WORKSPACE_SLUG}', '/tmp/users.json']; exec(open('/tmp/seed-members.py').read())"`,
   // Cleanup
   'rm -f /tmp/users.json /tmp/seed-members.py',
-  'docker exec api rm -f /tmp/users.json /tmp/seed-members.py',
+  'docker exec plane-api-1 rm -f /tmp/users.json /tmp/seed-members.py',
 ];
 
 const ssmArgs = [

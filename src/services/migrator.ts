@@ -121,7 +121,27 @@ export async function runMigration(options: MigrationOptions): Promise<void> {
     usersFile,
     stateMappingFile,
   } = options;
-  const maxAttachmentBytes = config.maxAttachmentSizeMb * 1024 * 1024;
+  let maxAttachmentBytes = config.maxAttachmentSizeMb * 1024 * 1024;
+
+  // ── Probe Plane's server-side file-size limit ──────────────────────────
+  // Plane's FILE_SIZE_LIMIT (env var on the api container) silently
+  // caps the S3 presigned URL's content-length-range. If the importer
+  // tries to upload a file larger than the server's cap, S3 returns
+  // 400 EntityTooLarge. Detect the mismatch up front and clamp our
+  // own limit to the server's so we skip-with-clear-message instead
+  // of failing per-attachment.
+  const serverLimit = await plane.getInstanceFileSizeLimit();
+  if (serverLimit !== null && serverLimit < maxAttachmentBytes) {
+    const serverMb = Math.floor(serverLimit / (1024 * 1024));
+    log.warn(
+      `Plane server's FILE_SIZE_LIMIT is ${serverMb} MB, smaller than ` +
+        `MAX_ATTACHMENT_SIZE_MB=${config.maxAttachmentSizeMb}. Clamping ` +
+        `to the server limit; larger attachments will be skipped instead ` +
+        `of failing with EntityTooLarge from S3. To allow larger uploads, ` +
+        `raise FILE_SIZE_LIMIT on the Plane api container.`,
+    );
+    maxAttachmentBytes = serverLimit;
+  }
 
   // ── Fetch Jira issues ──────────────────────────────────────────────────
   log.heading('Fetching Jira issues');
@@ -265,6 +285,15 @@ async function resolveUpdateMode(
 ): Promise<boolean> {
   if (reimport) return true;
   if (migratedCount === 0 || dryRun) return false;
+
+  // No TTY (background run, CI) → default to skipping existing.
+  // Operator can opt into update-mode with --reimport.
+  if (!process.stdin.isTTY) {
+    log.info(
+      `Found ${migratedCount} previously migrated issues. Non-interactive run — skipping existing.`,
+    );
+    return false;
+  }
 
   const { mode } = await inquirer.prompt([
     {
