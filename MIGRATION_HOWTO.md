@@ -1,9 +1,9 @@
 # Migration howto
 
 End-to-end recipe for migrating a Jira Cloud project to a self-hosted
-Plane Community Edition instance — the way we did it at zebaria
-(1,199 issues, 725 sprint assignments, 257 inline images, 9 active
-employees pre-seeded, 7 former employees as pending invites). Wear
+Plane Community Edition instance. Validated on a real migration of
+1,199 issues, 725 sprint assignments, 257 inline images, 9 active
+employees pre-seeded, and 7 former employees as pending invites. Wear
 the same path tomorrow and you should land in the same place.
 
 This guide covers what the upstream `plane-jira-importer` doesn't
@@ -233,7 +233,7 @@ PLANE_INSTANCE_ID=i-0abc...   \
   AWS_REGION=us-east-1        \
   PLANE_WORKSPACE_SLUG=wz     \
   BOT_EMAIL=you+bot@example.com \
-  BOT_LABEL=wildzebot-default \
+  BOT_LABEL=migration-bot-default \
   BOT_DESCRIPTION="Default service token" \
   npm run scripts:create-bot-token
 ```
