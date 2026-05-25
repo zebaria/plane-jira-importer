@@ -9,6 +9,7 @@
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
 import { withRetry } from '../utils/retry.js';
+import { log } from '../utils/logger.js';
 import type { IRateLimiter, PlaneConfig } from '../types/config.js';
 import type {
   PlaneProject,
@@ -420,7 +421,7 @@ export class PlaneClient {
         // Not the 409-orphan case; let apiCall's normal handler stringify.
         this.handleError(err, `getting upload credentials for "${filename}"`);
       }
-      console.log(
+      log.dim(
         `    Orphaned attachment row for "${filename}" (asset_id=${orphanId}); deleting and retrying`,
       );
       await this.apiCall(

@@ -186,12 +186,22 @@ async function* iterateJiraSprintAssignments(): AsyncGenerator<{
  * that the team set up but hasn't filled yet.
  */
 async function listJiraSprintsOnBoard(): Promise<JiraSprint[]> {
-  // Find the board for this project.
-  const { data: boards } = await jira.get('/rest/agile/1.0/board', {
-    params: { projectKeyOrId: PROJECT_KEY },
-  });
+  // Find every board for this project. The endpoint is paginated
+  // (default maxResults=50); a project with multiple historical
+  // boards would otherwise have its later boards silently dropped.
+  const boards: { id: number }[] = [];
+  let boardStart = 0;
+  for (;;) {
+    const { data } = await jira.get('/rest/agile/1.0/board', {
+      params: { projectKeyOrId: PROJECT_KEY, maxResults: 50, startAt: boardStart },
+    });
+    for (const b of (data.values ?? []) as { id: number }[]) boards.push(b);
+    if (data.isLast || !(data.values ?? []).length) break;
+    boardStart += data.values.length;
+  }
+
   const sprints: JiraSprint[] = [];
-  for (const b of boards.values ?? []) {
+  for (const b of boards) {
     let startAt = 0;
     for (;;) {
       const { data } = await jira.get(`/rest/agile/1.0/board/${b.id}/sprint`, {

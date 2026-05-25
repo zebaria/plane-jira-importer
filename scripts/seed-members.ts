@@ -47,20 +47,25 @@ function b64(content: string): string {
   return Buffer.from(content, 'utf-8').toString('base64');
 }
 
+// Stage argv as a JSON file rather than interpolating into a
+// `python -c` string. A workspace slug containing quotes would
+// otherwise break the Python parse or smuggle in unintended code.
+// Same pattern as scripts/create-bot-token.ts and renumber-issues.ts.
+const argv = ['seed-members', WORKSPACE_SLUG, '/tmp/users.json'];
+
 const remoteCommands = [
   // Stage files in /tmp on the host
   `echo '${b64(usersJson)}' | base64 -d > /tmp/users.json`,
   `echo '${b64(seedScript)}' | base64 -d > /tmp/seed-members.py`,
+  `echo '${b64(JSON.stringify(argv))}' | base64 -d > /tmp/seed-members.argv.json`,
   // Copy into the api container
   'docker cp /tmp/users.json plane-api-1:/tmp/users.json',
   'docker cp /tmp/seed-members.py plane-api-1:/tmp/seed-members.py',
-  // Execute. argv inside Django shell -c is passed through to the
-  // module being exec'd, so we wrap the script in an exec() call and
-  // splice argv in via sys.argv.
-  `docker exec plane-api-1 python manage.py shell -c "import sys; sys.argv=['seed-members', '${WORKSPACE_SLUG}', '/tmp/users.json']; exec(open('/tmp/seed-members.py').read())"`,
+  'docker cp /tmp/seed-members.argv.json plane-api-1:/tmp/seed-members.argv.json',
+  `docker exec plane-api-1 python manage.py shell -c "import sys, json; sys.argv = json.load(open('/tmp/seed-members.argv.json')); exec(open('/tmp/seed-members.py').read())"`,
   // Cleanup
-  'rm -f /tmp/users.json /tmp/seed-members.py',
-  'docker exec plane-api-1 rm -f /tmp/users.json /tmp/seed-members.py',
+  'rm -f /tmp/users.json /tmp/seed-members.py /tmp/seed-members.argv.json',
+  'docker exec plane-api-1 rm -f /tmp/users.json /tmp/seed-members.py /tmp/seed-members.argv.json',
 ];
 
 const ssmArgs = [

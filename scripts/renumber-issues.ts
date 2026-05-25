@@ -37,15 +37,21 @@ const SCRIPT_PATH = resolve('scripts/renumber-issues.py');
 const remoteScript = readFileSync(SCRIPT_PATH, 'utf-8');
 const b64 = (s: string) => Buffer.from(s, 'utf-8').toString('base64');
 
-const argvBits = [`'${WORKSPACE_SLUG}'`, `'${PROJECT_ID}'`];
-if (DRY_RUN) argvBits.push("'--dry-run'");
+// Stage argv as a JSON file rather than interpolating into a `python
+// -c` string. Workspace slugs / project ids that contain quotes
+// would otherwise break the Python parse or smuggle in unintended
+// code. Same pattern as scripts/create-bot-token.ts.
+const argv = ['renumber-issues', WORKSPACE_SLUG, PROJECT_ID];
+if (DRY_RUN) argv.push('--dry-run');
 
 const remoteCommands = [
   `echo '${b64(remoteScript)}' | base64 -d > /tmp/renumber-issues.py`,
+  `echo '${b64(JSON.stringify(argv))}' | base64 -d > /tmp/renumber-issues.argv.json`,
   'docker cp /tmp/renumber-issues.py plane-api-1:/tmp/renumber-issues.py',
-  `docker exec plane-api-1 python manage.py shell -c "import sys; sys.argv=['renumber-issues',${argvBits.join(',')}]; exec(open('/tmp/renumber-issues.py').read())"`,
-  'rm -f /tmp/renumber-issues.py',
-  'docker exec plane-api-1 rm -f /tmp/renumber-issues.py',
+  'docker cp /tmp/renumber-issues.argv.json plane-api-1:/tmp/renumber-issues.argv.json',
+  `docker exec plane-api-1 python manage.py shell -c "import sys, json; sys.argv = json.load(open('/tmp/renumber-issues.argv.json')); exec(open('/tmp/renumber-issues.py').read())"`,
+  'rm -f /tmp/renumber-issues.py /tmp/renumber-issues.argv.json',
+  'docker exec plane-api-1 rm -f /tmp/renumber-issues.py /tmp/renumber-issues.argv.json',
 ];
 
 const ssmArgs = [
