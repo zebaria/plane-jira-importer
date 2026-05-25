@@ -376,17 +376,65 @@ export class PlaneClient {
     size: number,
     external: ExternalMeta = EMPTY_EXTERNAL_META,
   ): Promise<PlaneAttachment> {
-    // Step 1: Get upload credentials
-    const credentials = await this.apiCall(
-      async () => {
-        const { data } = await this.client.post<PlaneUploadCredentials>(
-          `/workspaces/${this.workspaceSlug}/projects/${projectId}/work-items/${workItemId}/attachments/`,
-          { name: filename, type: mimeType, size, ...external },
-        );
-        return data;
-      },
-      `getting upload credentials for "${filename}"`,
-    );
+    // Step 1: Get upload credentials. If a previous run created the
+    // FileAsset row but failed to upload the bytes (e.g. the server's
+    // FILE_SIZE_LIMIT was too low and S3 returned EntityTooLarge),
+    // the row is left orphaned (`is_uploaded=false`) and a re-POST
+    // returns 409 with the existing asset id. Plane's API has no
+    // way to resume an upload for an existing asset — but it does
+    // expose DELETE, so on conflict: delete the orphaned row and
+    // POST again. This is safe under our usage because the importer
+    // owns `external_source = "jira-importer"` and is the only thing
+    // creating these rows.
+    const postCredentials = async () =>
+      this.client.post<PlaneUploadCredentials>(
+        `/workspaces/${this.workspaceSlug}/projects/${projectId}/work-items/${workItemId}/attachments/`,
+        { name: filename, type: mimeType, size, ...external },
+      );
+
+    let credentials: PlaneUploadCredentials;
+    try {
+      credentials = await this.apiCall(
+        async () => {
+          const { data } = await postCredentials();
+          return data;
+        },
+        `getting upload credentials for "${filename}"`,
+      );
+    } catch (err) {
+      // apiCall wraps AxiosError into a plain Error("Plane API error
+      // 409 while getting upload credentials ...: {...,id:...}").
+      // Extract the orphan id from that message string.
+      const msg = err instanceof Error ? err.message : String(err);
+      const m = msg.match(/Plane API error 409 while .*?:\s*({.*})/);
+      if (!m || !external.external_id) throw err;
+      let orphanId: string | undefined;
+      try {
+        const body = JSON.parse(m[1]) as { id?: string };
+        orphanId = body.id;
+      } catch {
+        throw err;
+      }
+      if (!orphanId) throw err;
+      console.log(
+        `    Orphaned attachment row for "${filename}" (asset_id=${orphanId}); deleting and retrying`,
+      );
+      await this.apiCall(
+        async () => {
+          await this.client.delete(
+            `/workspaces/${this.workspaceSlug}/projects/${projectId}/work-items/${workItemId}/attachments/${orphanId}/`,
+          );
+        },
+        `deleting orphaned attachment ${orphanId}`,
+      );
+      credentials = await this.apiCall(
+        async () => {
+          const { data } = await postCredentials();
+          return data;
+        },
+        `re-getting upload credentials for "${filename}"`,
+      );
+    }
 
     const assetId = credentials.asset_id ?? credentials.id ?? '';
     const uploadData = credentials.upload_data;
