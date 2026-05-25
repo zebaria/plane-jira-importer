@@ -409,8 +409,13 @@ export class PlaneClient {
         },
       );
     } catch (err) {
-      const e = err as { response?: { status?: number; data?: { id?: string } } };
-      const orphanId = e.response?.status === 409 ? e.response.data?.id : undefined;
+      // Use axios.isAxiosError to confirm the shape before reaching
+      // into .response — anything else (network blip, retry exhaustion,
+      // unexpected throw) flows to the normal handler.
+      const orphanId =
+        axios.isAxiosError(err) && err.response?.status === 409
+          ? (err.response.data as { id?: string } | undefined)?.id
+          : undefined;
       if (!orphanId || !external.external_id) {
         // Not the 409-orphan case; let apiCall's normal handler stringify.
         this.handleError(err, `getting upload credentials for "${filename}"`);

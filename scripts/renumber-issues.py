@@ -82,14 +82,20 @@ if dry_run:
 
 # Two-phase update to avoid hitting any (currently-unenforced but
 # possible-future) unique constraint mid-rewrite. Phase 1 moves every
-# row to a temp range above the current max. Phase 2 sets each row to
-# its real target.
+# row to a temp range that's guaranteed above BOTH the current max
+# sequence AND the highest target we'll ever set, so neither phase
+# can collide with a row that hasn't moved yet. Phase 2 then sets
+# each row to its real target.
 max_existing = (
     IssueSequence.objects.filter(project=project).order_by("-sequence").values_list("sequence", flat=True).first()
     or 0
 )
-TEMP_BASE = max_existing + 10_000
-print(f"  max existing sequence: {max_existing} → using temp base {TEMP_BASE}")
+max_target = max((target for _, target in planned), default=0)
+TEMP_BASE = max(max_existing, max_target) + 1
+print(
+    f"  max existing sequence: {max_existing}, max target: {max_target}"
+    f" → using temp base {TEMP_BASE}"
+)
 
 # Helpful: cache IssueSequence rows by issue id.
 seq_rows: dict = {}
