@@ -23,7 +23,8 @@
     "scripts:invite": "node --disable-warning=DEP0205 --import tsx scripts/invite-users.ts",
     "scripts:seed-members": "node --disable-warning=DEP0205 --import tsx scripts/seed-members.ts",
     "scripts:create-bot-token": "node --disable-warning=DEP0205 --import tsx scripts/create-bot-token.ts",
-    "scripts:sprints": "node --disable-warning=DEP0205 --import tsx scripts/migrate-sprints.ts"
+    "scripts:sprints": "node --disable-warning=DEP0205 --import tsx scripts/migrate-sprints.ts",
+    "scripts:renumber-issues": "node --disable-warning=DEP0205 --import tsx scripts/renumber-issues.ts"
   },
   "keywords": [
     "jira",
