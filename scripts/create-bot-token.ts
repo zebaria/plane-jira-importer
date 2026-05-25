@@ -5,7 +5,7 @@
  *
  * Usage:
  *   PLANE_INSTANCE_ID=i-... \\
- *   BOT_EMAIL=selberg+wildzebot@wildzebra.com \\
+ *   BOT_EMAIL=you+bot@example.com \\
  *   BOT_LABEL=vger-bot \\
  *   BOT_DESCRIPTION="vger / vibegrunt service token" \\
  *   npm run scripts:create-bot-token

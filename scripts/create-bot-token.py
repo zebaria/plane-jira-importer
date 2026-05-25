@@ -1,8 +1,8 @@
 """
 Create an APIToken for an existing Plane User, marked as user_type=1
 (Bot). Use for service accounts that need API access without an
-interactive sign-in — e.g. our `selberg+wildzebot@wildzebra.com` user
-that we seeded but locked out of password / OAuth login.
+interactive sign-in — e.g. a `you+bot@example.com` plus-addressed
+user that you seeded but locked out of password / OAuth login.
 
 Runs inside the api container as a Django shell script:
 

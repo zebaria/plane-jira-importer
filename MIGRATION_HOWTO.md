@@ -225,14 +225,14 @@ to one Plane User row.
 ### 5. Mint a service-account API token
 
 Same SSM pattern. Pick an email for the bot (we used
-`selberg+wildzebot@wildzebra.com` — gmail's plus addressing means
+`you+bot@example.com` — gmail's plus addressing means
 it lands in the human's inbox).
 
 ```bash
 PLANE_INSTANCE_ID=i-0abc...   \
   AWS_REGION=us-east-1        \
   PLANE_WORKSPACE_SLUG=wz     \
-  BOT_EMAIL=selberg+wildzebot@wildzebra.com \
+  BOT_EMAIL=you+bot@example.com \
   BOT_LABEL=wildzebot-default \
   BOT_DESCRIPTION="Default service token" \
   npm run scripts:create-bot-token
