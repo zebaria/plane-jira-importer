@@ -7,6 +7,7 @@
  * project selection, and kicks off the migration.
  */
 
+import { readFileSync } from 'node:fs';
 import 'dotenv/config';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -16,7 +17,13 @@ import { JiraClient } from './clients/jira.js';
 import { PlaneClient } from './clients/plane.js';
 import { RateLimiter } from './utils/rate-limiter.js';
 import { runMigration } from './services/migrator.js';
-import type { RequiredEnvVar, MigrationConfig } from './types/config.js';
+import { botToken } from './utils/auth.js';
+import type {
+  RequiredEnvVar,
+  MigrationConfig,
+  UsersFile,
+  StateMappingFile,
+} from './types/config.js';
 
 // ─── Banner ──────────────────────────────────────────────────────────────────
 
@@ -57,13 +64,14 @@ async function main(): Promise<void> {
     log.warn('Reimport mode — existing migrated items will be deleted and recreated');
   }
 
-  // Validate required environment variables
+  // Validate required environment variables. PLANE_API_KEY is
+  // resolved separately via `botToken()` since it accepts either
+  // PLANE_BOT_API_KEY or PLANE_API_KEY as a fallback.
   const required: RequiredEnvVar[] = [
     'JIRA_HOST',
     'JIRA_EMAIL',
     'JIRA_API_TOKEN',
     'PLANE_HOST',
-    'PLANE_API_KEY',
     'PLANE_WORKSPACE_SLUG',
   ];
 
@@ -96,7 +104,7 @@ async function main(): Promise<void> {
   const jiraEmail = requireEnv('JIRA_EMAIL');
   const jiraApiToken = requireEnv('JIRA_API_TOKEN');
   const planeHost = requireEnv('PLANE_HOST');
-  const planeApiKey = requireEnv('PLANE_API_KEY');
+  const planeApiKey = botToken();
   const planeWorkspaceSlug = requireEnv('PLANE_WORKSPACE_SLUG');
 
   const jira = new JiraClient({
@@ -121,6 +129,21 @@ async function main(): Promise<void> {
   // ── Select Plane project ─────────────────────────────────────────────
   const planeProjectId = flags['plane-project'] ?? await selectPlaneProject(plane);
 
+  // ── Optional mapping files (skip interactive prompts) ────────────────
+  let usersFile: UsersFile | undefined;
+  if (typeof flags['users-file'] === 'string') {
+    log.dim(`  users-file: ${flags['users-file']}`);
+    usersFile = JSON.parse(readFileSync(flags['users-file'], 'utf-8')) as UsersFile;
+  }
+
+  let stateMappingFile: StateMappingFile | undefined;
+  if (typeof flags['state-mapping-file'] === 'string') {
+    log.dim(`  state-mapping-file: ${flags['state-mapping-file']}`);
+    stateMappingFile = JSON.parse(
+      readFileSync(flags['state-mapping-file'], 'utf-8'),
+    ) as StateMappingFile;
+  }
+
   // ── Run migration ────────────────────────────────────────────────────
   await runMigration({
     jira,
@@ -130,6 +153,8 @@ async function main(): Promise<void> {
     dryRun,
     reimport,
     config: migrationConfig,
+    usersFile,
+    stateMappingFile,
   });
 }
 

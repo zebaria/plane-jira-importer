@@ -18,7 +18,8 @@ import type { JiraClient } from '../clients/jira.js';
 import type { PlaneClient } from '../clients/plane.js';
 import type { JiraIssue, JiraComment } from '../types/jira.js';
 import type { CreateWorkItemPayload, CreateCommentPayload } from '../types/plane.js';
-import type { MigrationConfig } from '../types/config.js';
+import type { MigrationConfig, UsersFile, StateMappingFile } from '../types/config.js';
+import type { UserResolution } from './mapper.js';
 import { log } from '../utils/logger.js';
 import { formatDate, formatSize, formatDuration, progress } from '../utils/helpers.js';
 import {
@@ -42,6 +43,15 @@ export interface MigrationOptions {
   dryRun: boolean;
   reimport: boolean;
   config: MigrationConfig;
+  /**
+   * Optional pre-built user map (Jira accountId → file entry). When
+   * provided, skips the interactive prompts in `buildUserMap` and uses
+   * the file directly. Unmatched users land in the description as
+   * provenance notes.
+   */
+  usersFile?: UsersFile;
+  /** Optional pre-built state mapping; skips the interactive prompts. */
+  stateMappingFile?: StateMappingFile;
 }
 
 /** Internal parameters passed to the single-issue migration helper. */
@@ -53,7 +63,7 @@ interface MigrateIssueParams {
   plane: PlaneClient;
   planeProjectId: string;
   statusMap: Record<string, string>;
-  userMap: Record<string, string>;
+  userMap: Record<string, UserResolution>;
   labelCache: Map<string, string>;
   workItemMap: Map<string, string>;
   maxAttachmentBytes: number;
@@ -100,8 +110,38 @@ interface MigrationStats {
  * 7. Print a structured summary report
  */
 export async function runMigration(options: MigrationOptions): Promise<void> {
-  const { jira, plane, projectKey, planeProjectId, dryRun, reimport, config } = options;
-  const maxAttachmentBytes = config.maxAttachmentSizeMb * 1024 * 1024;
+  const {
+    jira,
+    plane,
+    projectKey,
+    planeProjectId,
+    dryRun,
+    reimport,
+    config,
+    usersFile,
+    stateMappingFile,
+  } = options;
+  let maxAttachmentBytes = config.maxAttachmentSizeMb * 1024 * 1024;
+
+  // ── Probe Plane's server-side file-size limit ──────────────────────────
+  // Plane's FILE_SIZE_LIMIT (env var on the api container) silently
+  // caps the S3 presigned URL's content-length-range. If the importer
+  // tries to upload a file larger than the server's cap, S3 returns
+  // 400 EntityTooLarge. Detect the mismatch up front and clamp our
+  // own limit to the server's so we skip-with-clear-message instead
+  // of failing per-attachment.
+  const serverLimit = await plane.getInstanceFileSizeLimit();
+  if (serverLimit !== null && serverLimit < maxAttachmentBytes) {
+    const serverMb = Math.floor(serverLimit / (1024 * 1024));
+    log.warn(
+      `Plane server's FILE_SIZE_LIMIT is ${serverMb} MB, smaller than ` +
+        `MAX_ATTACHMENT_SIZE_MB=${config.maxAttachmentSizeMb}. Clamping ` +
+        `to the server limit; larger attachments will be skipped instead ` +
+        `of failing with EntityTooLarge from S3. To allow larger uploads, ` +
+        `raise FILE_SIZE_LIMIT on the Plane api container.`,
+    );
+    maxAttachmentBytes = serverLimit;
+  }
 
   // ── Fetch Jira issues ──────────────────────────────────────────────────
   log.heading('Fetching Jira issues');
@@ -134,7 +174,9 @@ export async function runMigration(options: MigrationOptions): Promise<void> {
   const migratedItems = existingWorkItems.filter(
     (w) => w.external_source === 'jira-importer',
   );
-  const migratedKeys = new Set(migratedItems.map((w) => w.external_id));
+  const migratedKeys = new Set(
+    migratedItems.map((w) => w.external_id).filter((k): k is string => !!k),
+  );
 
   // Track created work items by Jira key (including previously migrated)
   const workItemMap = new Map<string, string>();
@@ -149,10 +191,10 @@ export async function runMigration(options: MigrationOptions): Promise<void> {
 
   // ── Build mappings ─────────────────────────────────────────────────────
   log.heading('Building status mapping');
-  const statusMap = await buildStatusMap(statuses, planeStates);
+  const statusMap = await buildStatusMap(statuses, planeStates, stateMappingFile);
 
   log.heading('Building user mapping');
-  const userMap = await buildUserMap(assignees, planeMembers);
+  const userMap = await buildUserMap(assignees, planeMembers, usersFile);
 
   // ── Label cache ────────────────────────────────────────────────────────
   const labelCache = new Map<string, string>();
@@ -244,6 +286,15 @@ async function resolveUpdateMode(
   if (reimport) return true;
   if (migratedCount === 0 || dryRun) return false;
 
+  // No TTY (background run, CI) → default to skipping existing.
+  // Operator can opt into update-mode with --reimport.
+  if (!process.stdin.isTTY) {
+    log.info(
+      `Found ${migratedCount} previously migrated issues. Non-interactive run — skipping existing.`,
+    );
+    return false;
+  }
+
   const { mode } = await inquirer.prompt([
     {
       type: 'list',
@@ -269,7 +320,7 @@ interface MigrateAllParams {
   plane: PlaneClient;
   planeProjectId: string;
   statusMap: Record<string, string>;
-  userMap: Record<string, string>;
+  userMap: Record<string, UserResolution>;
   labelCache: Map<string, string>;
   workItemMap: Map<string, string>;
   maxAttachmentBytes: number;
@@ -374,15 +425,44 @@ async function buildWorkItemPayload(args: BuildPayloadArgs): Promise<CreateWorkI
 
   const jiraLink = `https://${jira.host}/browse/${issue.key}`;
   const renderedDesc = fullIssue.renderedFields?.description ?? '';
-  const descriptionHtml = `<p><a href="${jiraLink}" target="_blank">🔗 ${issue.key} on Jira</a></p>${renderedDesc}`;
 
   const priority = mapPriority(issue.fields.priority?.name ?? null);
   const stateId = issue.fields.status?.name ? statusMap[issue.fields.status.name] : undefined;
 
+  // Resolve assignee + reporter through the user map. If a Jira user
+  // resolves to a real Plane member, set them as assignee. Otherwise
+  // record an "originally assigned to" / "originally reported by"
+  // line in the description so the migrated work item still has the
+  // human context, even though Plane's API can't accept pending-invite
+  // emails as assignee_ids.
   const assigneeIds: string[] = [];
-  if (issue.fields.assignee?.accountId && userMap[issue.fields.assignee.accountId]) {
-    assigneeIds.push(userMap[issue.fields.assignee.accountId]);
+  const noteLines: string[] = [];
+
+  const jiraAssignee = issue.fields.assignee;
+  if (jiraAssignee?.accountId) {
+    const resolution = userMap[jiraAssignee.accountId];
+    if (resolution?.planeMemberId) {
+      assigneeIds.push(resolution.planeMemberId);
+    } else {
+      const note = resolution?.unresolvedNote ?? jiraAssignee.displayName;
+      noteLines.push(`<em>Originally assigned to: ${note}</em>`);
+    }
   }
+
+  const jiraReporter = issue.fields.reporter;
+  if (jiraReporter?.accountId && jiraReporter.accountId !== jiraAssignee?.accountId) {
+    const resolution = userMap[jiraReporter.accountId];
+    const reporterName =
+      resolution?.unresolvedNote ?? jiraReporter.displayName;
+    // We can't set reporter in Plane (the API forces it to the API key
+    // owner), so reporter always becomes a description note when it
+    // differs from the assignee.
+    noteLines.push(`<em>Originally reported by: ${reporterName}</em>`);
+  }
+
+  const provenance =
+    noteLines.length > 0 ? `<p>${noteLines.join('<br>')}</p>` : '';
+  const descriptionHtml = `<p><a href="${jiraLink}" target="_blank">🔗 ${issue.key} on Jira</a></p>${provenance}${renderedDesc}`;
 
   const labelIds: string[] = [];
   if (issue.fields.issuetype?.name) {

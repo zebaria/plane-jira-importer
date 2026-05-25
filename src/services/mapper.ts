@@ -9,6 +9,7 @@ import inquirer from 'inquirer';
 import type { PlaneClient } from '../clients/plane.js';
 import type { JiraIssue, JiraUser } from '../types/jira.js';
 import type { PlanePriority, PlaneState, PlaneMember } from '../types/plane.js';
+import type { UsersFile, StateMappingFile } from '../types/config.js';
 import { log } from '../utils/logger.js';
 
 // ─── Priority Mapping ────────────────────────────────────────────────────────
@@ -42,14 +43,78 @@ export function mapPriority(jiraPriority: string | null): PlanePriority {
 /**
  * Build a mapping from Jira status names to Plane state IDs.
  *
- * Auto-matches by name (case-insensitive). Falls back to an interactive
- * inquirer prompt for unmatched statuses.
+ * If `stateFile` is provided, resolve via the file (Jira name → Plane name
+ * → Plane id) and skip prompts entirely. Statuses that the file leaves
+ * unmapped (`null` in the file, or absent) fail loudly — the operator
+ * should fix the file and re-run, not silently lose data.
+ *
+ * Otherwise, auto-match by name (case-insensitive) and fall back to an
+ * interactive prompt for unmatched statuses.
  */
 export async function buildStatusMap(
   jiraStatuses: string[],
   planeStates: PlaneState[],
+  stateFile?: StateMappingFile,
 ): Promise<Record<string, string>> {
   const map: Record<string, string> = {};
+
+  if (stateFile) {
+    // Build a lowercase-name → ids[] index. Plane allows multiple
+    // states with the same display name across different groups
+    // (e.g. a "Done" in the Completed group and another in the
+    // Cancelled group), so we collect *all* matches per name and
+    // warn if we have to pick one ambiguously.
+    const planeByName = new Map<string, PlaneState[]>();
+    for (const s of planeStates) {
+      const key = s.name.toLowerCase();
+      const bucket = planeByName.get(key) ?? [];
+      bucket.push(s);
+      planeByName.set(key, bucket);
+    }
+
+    const missing: string[] = [];
+    for (const status of jiraStatuses) {
+      const targetName = stateFile.mapping[status];
+      if (!targetName) {
+        missing.push(`"${status}" → (unmapped)`);
+        continue;
+      }
+      const matches = planeByName.get(targetName.toLowerCase()) ?? [];
+      if (matches.length === 0) {
+        missing.push(`"${status}" → "${targetName}" (no Plane state by that name)`);
+        continue;
+      }
+      const chosen = matches[0];
+      if (matches.length > 1) {
+        const alts = matches
+          .map((s) => `"${s.name}" (group=${s.group}, id=${s.id})`)
+          .join(', ');
+        log.warn(
+          `Plane has ${matches.length} states named "${targetName}": ${alts}. ` +
+            `Picking the first (group=${chosen.group}). Disambiguate by ` +
+            `renaming one of the duplicate states in Plane, or by editing ` +
+            `the state-mapping file to reference a unique name.`,
+        );
+      }
+      map[status] = chosen.id;
+      log.dim(`  ${status} → ${targetName} (group=${chosen.group})`);
+    }
+    if (missing.length > 0) {
+      log.error(`State mapping file is incomplete:\n  ${missing.join('\n  ')}`);
+      throw new Error('State mapping incomplete; fix data/state-mapping.json and re-run');
+    }
+    return map;
+  }
+
+  // No file + no TTY = nothing we can do. Fail fast with a clear
+  // message instead of hanging on inquirer's prompt waiting for
+  // input that will never come.
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      'Status mapping requires --state-mapping-file when running non-interactively. ' +
+        'Generate one with `npm run scripts:states` and pass it via --state-mapping-file.',
+    );
+  }
 
   for (const status of jiraStatuses) {
     const autoMatch = planeStates.find(
@@ -83,16 +148,102 @@ export async function buildStatusMap(
 // ─── User Mapping ────────────────────────────────────────────────────────────
 
 /**
- * Build a mapping from Jira account IDs to Plane member IDs.
+ * Resolution result for a Jira user.
  *
- * Auto-matches by email (case-insensitive). Falls back to an interactive
- * inquirer prompt for unmatched users.
+ *  - `planeMemberId` is set when the user resolved to an active Plane
+ *    workspace member; the work item can be assigned to them.
+ *  - When unset, the migrator falls back to noting the original
+ *    assignee in the description — see `unresolvedNote` for the human
+ *    text to embed.
+ */
+export interface UserResolution {
+  planeMemberId: string | null;
+  /** Human-readable identifier for the description fallback note. */
+  unresolvedNote?: string;
+}
+
+/**
+ * Build a mapping from Jira account IDs to a resolved user record.
+ *
+ * If `usersFile` is provided, resolve every Jira account via the file:
+ *   accountId → file entry → email → Plane member (by email)
+ * When the email matches a current Plane member, the assignee is
+ * mapped. Otherwise the entry is recorded with `unresolvedNote` so the
+ * migrator can mention the original assignee in the description. This
+ * is the expected path while invites are still pending.
+ *
+ * Without `usersFile`, falls back to the legacy interactive prompt
+ * flow — auto-match by email, prompt for the rest.
  */
 export async function buildUserMap(
   jiraUsers: JiraUser[],
   planeMembers: PlaneMember[],
-): Promise<Record<string, string>> {
-  const map: Record<string, string> = {};
+  usersFile?: UsersFile,
+): Promise<Record<string, UserResolution>> {
+  const map: Record<string, UserResolution> = {};
+
+  if (usersFile) {
+    const memberByEmail = new Map<string, PlaneMember>();
+    for (const m of planeMembers) {
+      if (m.email) memberByEmail.set(m.email.toLowerCase(), m);
+    }
+
+    let resolvedToMember = 0;
+    let pendingInvite = 0;
+    let noEmail = 0;
+    let notInFile = 0;
+
+    for (const user of jiraUsers) {
+      const entry = usersFile[user.accountId];
+      if (!entry) {
+        notInFile++;
+        map[user.accountId] = {
+          planeMemberId: null,
+          unresolvedNote: `${user.displayName} (jira:${user.accountId}, not in users-file)`,
+        };
+        continue;
+      }
+      if (!entry.email) {
+        noEmail++;
+        map[user.accountId] = {
+          planeMemberId: null,
+          unresolvedNote: `${entry.display_name} (no email)`,
+        };
+        continue;
+      }
+      const member = memberByEmail.get(entry.email.toLowerCase());
+      if (member) {
+        resolvedToMember++;
+        map[user.accountId] = { planeMemberId: member.id };
+      } else {
+        // Email known but not yet a Plane member — likely a pending
+        // invitation. Record the email so the importer can put it in
+        // the description note. Once the user accepts the invite, a
+        // re-run with `--reimport` will pick them up.
+        pendingInvite++;
+        const flag = entry.current ? '' : ' [former]';
+        map[user.accountId] = {
+          planeMemberId: null,
+          unresolvedNote: `${entry.display_name} <${entry.email}>${flag}`,
+        };
+      }
+    }
+
+    log.dim(`  User map (file mode):`);
+    log.dim(`    resolved to Plane member: ${resolvedToMember}`);
+    log.dim(`    pending invite (noted in description): ${pendingInvite}`);
+    log.dim(`    no email (noted in description):       ${noEmail}`);
+    log.dim(`    not in users-file (noted):             ${notInFile}`);
+    return map;
+  }
+
+  // No file + no TTY = nothing we can do. Fail fast.
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      'User mapping requires --users-file when running non-interactively. ' +
+        'Generate one with `npm run scripts:users` and pass it via --users-file.',
+    );
+  }
 
   for (const user of jiraUsers) {
     const autoMatch = planeMembers.find(
@@ -127,7 +278,12 @@ export async function buildUserMap(
     ]);
 
     if (selectedMemberId) {
-      map[user.accountId] = selectedMemberId as string;
+      map[user.accountId] = { planeMemberId: selectedMemberId as string };
+    } else {
+      map[user.accountId] = {
+        planeMemberId: null,
+        unresolvedNote: user.displayName,
+      };
     }
   }
 
