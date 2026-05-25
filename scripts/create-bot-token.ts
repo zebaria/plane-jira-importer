@@ -47,15 +47,29 @@ function b64(content: string): string {
   return Buffer.from(content, 'utf-8').toString('base64');
 }
 
+// Stage argv as a JSON file rather than interpolating into a `python
+// -c` string. Quote-injection from values containing apostrophes
+// (think names like O'Brien, descriptions with code samples) would
+// otherwise either break the python parse or worse, smuggle in
+// unintended Python code.
+const argv = [
+  'create-bot-token',
+  BOT_EMAIL,
+  WORKSPACE_SLUG,
+  BOT_LABEL,
+  ...(BOT_DESCRIPTION ? [BOT_DESCRIPTION] : []),
+];
+
 const remoteCommands = [
   `echo '${b64(remoteScript)}' | base64 -d > /tmp/create-bot-token.py`,
+  `echo '${b64(JSON.stringify(argv))}' | base64 -d > /tmp/create-bot-token.argv.json`,
   'docker cp /tmp/create-bot-token.py plane-api-1:/tmp/create-bot-token.py',
-  // Pass argv to the script via sys.argv inside the shell -c context.
-  `docker exec plane-api-1 python manage.py shell -c "import sys; sys.argv=['create-bot-token','${BOT_EMAIL}','${WORKSPACE_SLUG}','${BOT_LABEL}',${BOT_DESCRIPTION ? `'${BOT_DESCRIPTION.replace(/'/g, "'\\''")}'` : ''}]; exec(open('/tmp/create-bot-token.py').read())"`,
-  // Cleanup the script (don't keep secrets/scripts on disk; the token
-  // is already in the DB and printed to our stdout).
-  'rm -f /tmp/create-bot-token.py',
-  'docker exec plane-api-1 rm -f /tmp/create-bot-token.py',
+  'docker cp /tmp/create-bot-token.argv.json plane-api-1:/tmp/create-bot-token.argv.json',
+  `docker exec plane-api-1 python manage.py shell -c "import sys, json; sys.argv = json.load(open('/tmp/create-bot-token.argv.json')); exec(open('/tmp/create-bot-token.py').read())"`,
+  // Cleanup (don't keep secrets/scripts on disk; the token is in
+  // the DB and printed to our stdout).
+  'rm -f /tmp/create-bot-token.py /tmp/create-bot-token.argv.json',
+  'docker exec plane-api-1 rm -f /tmp/create-bot-token.py /tmp/create-bot-token.argv.json',
 ];
 
 const ssmArgs = [

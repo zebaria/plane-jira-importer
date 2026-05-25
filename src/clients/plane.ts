@@ -392,30 +392,29 @@ export class PlaneClient {
         { name: filename, type: mimeType, size, ...external },
       );
 
+    // Run the POST through withRetry directly (not apiCall) so we
+    // can inspect the raw AxiosError on 409 — apiCall stringifies
+    // errors before throwing, which loses the structured response.
     let credentials: PlaneUploadCredentials;
     try {
-      credentials = await this.apiCall(
+      credentials = await withRetry(
         async () => {
+          await this.rateLimiter.wait();
           const { data } = await postCredentials();
           return data;
         },
-        `getting upload credentials for "${filename}"`,
+        {
+          maxRetries: this.maxRetries,
+          context: `getting upload credentials for "${filename}"`,
+        },
       );
     } catch (err) {
-      // apiCall wraps AxiosError into a plain Error("Plane API error
-      // 409 while getting upload credentials ...: {...,id:...}").
-      // Extract the orphan id from that message string.
-      const msg = err instanceof Error ? err.message : String(err);
-      const m = msg.match(/Plane API error 409 while .*?:\s*({.*})/);
-      if (!m || !external.external_id) throw err;
-      let orphanId: string | undefined;
-      try {
-        const body = JSON.parse(m[1]) as { id?: string };
-        orphanId = body.id;
-      } catch {
-        throw err;
+      const e = err as { response?: { status?: number; data?: { id?: string } } };
+      const orphanId = e.response?.status === 409 ? e.response.data?.id : undefined;
+      if (!orphanId || !external.external_id) {
+        // Not the 409-orphan case; let apiCall's normal handler stringify.
+        this.handleError(err, `getting upload credentials for "${filename}"`);
       }
-      if (!orphanId) throw err;
       console.log(
         `    Orphaned attachment row for "${filename}" (asset_id=${orphanId}); deleting and retrying`,
       );
