@@ -36,6 +36,8 @@ import { config as loadEnv } from 'dotenv';
 import axios from 'axios';
 import type { AxiosError } from 'axios';
 
+import { botToken } from '../src/utils/auth.js';
+
 loadEnv();
 
 const flags = parseArgs(process.argv.slice(2));
@@ -43,7 +45,7 @@ const PLANE_PROJECT_ID = flags['plane-project'] ?? process.env.PLANE_PROJECT_ID;
 const DRY_RUN = flags['dry-run'] === 'true';
 
 const PLANE_HOST = required('PLANE_HOST');
-const PLANE_API_KEY = required('PLANE_API_KEY');
+const PLANE_API_KEY = botToken();
 const PLANE_WORKSPACE_SLUG = required('PLANE_WORKSPACE_SLUG');
 
 if (!PLANE_PROJECT_ID) {

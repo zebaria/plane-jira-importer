@@ -40,6 +40,8 @@ import { config as loadEnv } from 'dotenv';
 import axios from 'axios';
 import type { AxiosError } from 'axios';
 
+import { botToken } from '../src/utils/auth.js';
+
 loadEnv();
 
 const flags = parseArgs(process.argv.slice(2));
@@ -51,7 +53,7 @@ const JIRA_HOST = required('JIRA_HOST');
 const JIRA_EMAIL = required('JIRA_EMAIL');
 const JIRA_API_TOKEN = required('JIRA_API_TOKEN');
 const PLANE_HOST = required('PLANE_HOST');
-const PLANE_API_KEY = required('PLANE_API_KEY');
+const PLANE_API_KEY = botToken();
 const PLANE_WORKSPACE_SLUG = required('PLANE_WORKSPACE_SLUG');
 
 if (!PLANE_PROJECT_ID) {

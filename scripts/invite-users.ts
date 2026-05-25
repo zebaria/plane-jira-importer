@@ -24,16 +24,18 @@ import { resolve } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import axios from 'axios';
 
+import { personalToken } from '../src/utils/auth.js';
+
 loadEnv();
 
 const PLANE_HOST = process.env.PLANE_HOST!;
-const PLANE_API_KEY = process.env.PLANE_API_KEY!;
+const PLANE_API_KEY = personalToken();
 const PLANE_WORKSPACE_SLUG = process.env.PLANE_WORKSPACE_SLUG!;
 const DRY_RUN = process.env.DRY_RUN === '1' || process.env.DRY_RUN === 'true';
 const USERS_FILE = resolve(process.env.USERS_FILE ?? 'data/users.json');
 
-if (!PLANE_HOST || !PLANE_API_KEY || !PLANE_WORKSPACE_SLUG) {
-  console.error('Missing PLANE_HOST / PLANE_API_KEY / PLANE_WORKSPACE_SLUG in .env');
+if (!PLANE_HOST || !PLANE_WORKSPACE_SLUG) {
+  console.error('Missing PLANE_HOST / PLANE_WORKSPACE_SLUG in .env');
   process.exit(1);
 }
 
