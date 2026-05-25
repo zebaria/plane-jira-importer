@@ -17,6 +17,7 @@ import { JiraClient } from './clients/jira.js';
 import { PlaneClient } from './clients/plane.js';
 import { RateLimiter } from './utils/rate-limiter.js';
 import { runMigration } from './services/migrator.js';
+import { botToken } from './utils/auth.js';
 import type {
   RequiredEnvVar,
   MigrationConfig,
@@ -63,13 +64,14 @@ async function main(): Promise<void> {
     log.warn('Reimport mode — existing migrated items will be deleted and recreated');
   }
 
-  // Validate required environment variables
+  // Validate required environment variables. PLANE_API_KEY is
+  // resolved separately via `botToken()` since it accepts either
+  // PLANE_BOT_API_KEY or PLANE_API_KEY as a fallback.
   const required: RequiredEnvVar[] = [
     'JIRA_HOST',
     'JIRA_EMAIL',
     'JIRA_API_TOKEN',
     'PLANE_HOST',
-    'PLANE_API_KEY',
     'PLANE_WORKSPACE_SLUG',
   ];
 
@@ -102,7 +104,7 @@ async function main(): Promise<void> {
   const jiraEmail = requireEnv('JIRA_EMAIL');
   const jiraApiToken = requireEnv('JIRA_API_TOKEN');
   const planeHost = requireEnv('PLANE_HOST');
-  const planeApiKey = requireEnv('PLANE_API_KEY');
+  const planeApiKey = botToken();
   const planeWorkspaceSlug = requireEnv('PLANE_WORKSPACE_SLUG');
 
   const jira = new JiraClient({

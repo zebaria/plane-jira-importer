@@ -9,6 +9,7 @@
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
 import { withRetry } from '../utils/retry.js';
+import { log } from '../utils/logger.js';
 import type { IRateLimiter, PlaneConfig } from '../types/config.js';
 import type {
   PlaneProject,
@@ -376,17 +377,69 @@ export class PlaneClient {
     size: number,
     external: ExternalMeta = EMPTY_EXTERNAL_META,
   ): Promise<PlaneAttachment> {
-    // Step 1: Get upload credentials
-    const credentials = await this.apiCall(
-      async () => {
-        const { data } = await this.client.post<PlaneUploadCredentials>(
-          `/workspaces/${this.workspaceSlug}/projects/${projectId}/work-items/${workItemId}/attachments/`,
-          { name: filename, type: mimeType, size, ...external },
-        );
-        return data;
-      },
-      `getting upload credentials for "${filename}"`,
-    );
+    // Step 1: Get upload credentials. If a previous run created the
+    // FileAsset row but failed to upload the bytes (e.g. the server's
+    // FILE_SIZE_LIMIT was too low and S3 returned EntityTooLarge),
+    // the row is left orphaned (`is_uploaded=false`) and a re-POST
+    // returns 409 with the existing asset id. Plane's API has no
+    // way to resume an upload for an existing asset — but it does
+    // expose DELETE, so on conflict: delete the orphaned row and
+    // POST again. This is safe under our usage because the importer
+    // owns `external_source = "jira-importer"` and is the only thing
+    // creating these rows.
+    const postCredentials = async () =>
+      this.client.post<PlaneUploadCredentials>(
+        `/workspaces/${this.workspaceSlug}/projects/${projectId}/work-items/${workItemId}/attachments/`,
+        { name: filename, type: mimeType, size, ...external },
+      );
+
+    // Run the POST through withRetry directly (not apiCall) so we
+    // can inspect the raw AxiosError on 409 — apiCall stringifies
+    // errors before throwing, which loses the structured response.
+    let credentials: PlaneUploadCredentials;
+    try {
+      credentials = await withRetry(
+        async () => {
+          await this.rateLimiter.wait();
+          const { data } = await postCredentials();
+          return data;
+        },
+        {
+          maxRetries: this.maxRetries,
+          context: `getting upload credentials for "${filename}"`,
+        },
+      );
+    } catch (err) {
+      // Use axios.isAxiosError to confirm the shape before reaching
+      // into .response — anything else (network blip, retry exhaustion,
+      // unexpected throw) flows to the normal handler.
+      const orphanId =
+        axios.isAxiosError(err) && err.response?.status === 409
+          ? (err.response.data as { id?: string } | undefined)?.id
+          : undefined;
+      if (!orphanId || !external.external_id) {
+        // Not the 409-orphan case; let apiCall's normal handler stringify.
+        this.handleError(err, `getting upload credentials for "${filename}"`);
+      }
+      log.dim(
+        `    Orphaned attachment row for "${filename}" (asset_id=${orphanId}); deleting and retrying`,
+      );
+      await this.apiCall(
+        async () => {
+          await this.client.delete(
+            `/workspaces/${this.workspaceSlug}/projects/${projectId}/work-items/${workItemId}/attachments/${orphanId}/`,
+          );
+        },
+        `deleting orphaned attachment ${orphanId}`,
+      );
+      credentials = await this.apiCall(
+        async () => {
+          const { data } = await postCredentials();
+          return data;
+        },
+        `re-getting upload credentials for "${filename}"`,
+      );
+    }
 
     const assetId = credentials.asset_id ?? credentials.id ?? '';
     const uploadData = credentials.upload_data;

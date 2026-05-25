@@ -12,7 +12,7 @@
  *   {
  *     "<jira account id>": {
  *       "display_name": "Jane Doe",
- *       "email": "jane@wildzebra.com",
+ *       "email": "jane@example.com",
  *       "current": true,
  *       "_seen_in": ["assignee","reporter"]
  *     },

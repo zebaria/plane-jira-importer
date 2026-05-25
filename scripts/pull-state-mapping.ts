@@ -34,8 +34,10 @@ const JIRA_EMAIL = process.env.JIRA_EMAIL!;
 const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN!;
 const PROJECT_KEY = process.env.PROJECT_KEY ?? 'WZ';
 
+import { personalToken } from '../src/utils/auth.js';
+
 const PLANE_HOST = process.env.PLANE_HOST!;
-const PLANE_API_KEY = process.env.PLANE_API_KEY!;
+const PLANE_API_KEY = personalToken();
 const PLANE_WORKSPACE_SLUG = process.env.PLANE_WORKSPACE_SLUG!;
 const PLANE_PROJECT_ID = process.env.PLANE_PROJECT_ID!;
 
