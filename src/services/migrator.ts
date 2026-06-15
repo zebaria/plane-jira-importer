@@ -339,12 +339,16 @@ async function migrateAll(params: MigrateAllParams): Promise<MigrationStats> {
 
   for (let i = 0; i < issues.length; i++) {
     const issue = issues[i];
+    // Capture existing-ness BEFORE migrateIssue runs — it populates
+    // workItemMap for the just-created item, so reading the map back
+    // afterwards would always look like an update.
+    const wasUpdate = !!params.workItemMap.get(issue.key);
     try {
       const result = await migrateIssue({
         ...params, issue, index: i + 1, total: issues.length,
         existingWorkItemId: params.workItemMap.get(issue.key),
       });
-      accumulateResult(stats, result, !!params.workItemMap.get(issue.key));
+      accumulateResult(stats, result, wasUpdate);
     } catch (err: unknown) {
       stats.failed++;
       const errorMsg = err instanceof Error ? err.message : String(err);

@@ -98,18 +98,19 @@ describe('JiraClient', () => {
 
   describe('searchIssues', () => {
     it('returns all issues across multiple pages', async () => {
-      // First page: exactly 100 items (maxResults) triggers next page fetch
+      // First page: a nextPageToken (not page-fullness) is what drives
+      // the cursor-pagination loop on /search/jql to fetch another page.
       const page1 = Array.from({ length: 100 }, (_, i) => ({
         id: String(i + 1),
         key: `P-${i + 1}`,
         fields: { summary: `Issue ${i + 1}` },
       }));
-      // Second page: fewer than 100 → last page
+      // Second page: isLast (no nextPageToken) → loop stops.
       const page2 = [{ id: '101', key: 'P-101', fields: { summary: 'Last' } }];
 
       mockGet
-        .mockResolvedValueOnce({ data: { issues: page1 } })
-        .mockResolvedValueOnce({ data: { issues: page2 } });
+        .mockResolvedValueOnce({ data: { issues: page1, nextPageToken: 'tok-2' } })
+        .mockResolvedValueOnce({ data: { issues: page2, isLast: true } });
 
       const result = await client.searchIssues('PROJ');
 
